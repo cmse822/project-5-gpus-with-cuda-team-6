@@ -10,7 +10,7 @@
 namespace fs = std::experimental::filesystem;
 
 const unsigned int NG = 2;
-const unsigned int BLOCK_DIM_X = 512;
+const unsigned int BLOCK_DIM_X = 1024;
 
 __constant__ float c_a, c_b, c_c;
 
@@ -97,13 +97,14 @@ void shared_diffusion(float* u, float *u_new, const unsigned int n){
 
   //Allocate the shared memory
   extern __shared__ float shared_u[];
-
+//  __shared__ float shared_u[BLOCK_DIM_X];
   //Fill shared memory with the data needed from global memory
   //HINT:
   //What data does each block need from global memory?
   //When do the threads in the block need to sync?
 
   shared_u[localIdx] = u[globalIdx];
+  __syncthreads();
 
   if (localIdx < 2 || localIdx >= blockDim.x-2){
     u_new[globalIdx] = u[globalIdx] + (- c_a * u[globalIdx-2]
@@ -114,7 +115,6 @@ void shared_diffusion(float* u, float *u_new, const unsigned int n){
     return;
   }
 
-  __syncthreads();
 
   //Do the diffusion
   u_new[globalIdx] = shared_u[localIdx] + (- c_a * shared_u[localIdx-2]
@@ -156,6 +156,12 @@ void outputToFile(const std::string& filename, float* u, unsigned int n){
   file.close();
 };
 
+
+void printReport(unsigned int num_steps, unsigned int grid_size, unsigned int block_size, float host_time, float cuda_time, float shared_time, float excessive_time){
+
+  printf("| %d | %d | %d | %f | %f | %f | %f |\n", num_steps, grid_size, block_size, host_time, cuda_time, shared_time, excessive_time);
+}
+
 /********************************************************************************
   main
  *******************************************************************************/
@@ -173,16 +179,28 @@ int main(int argc, char** argv){
 
   //Number of steps to iterate
 //   const unsigned int n_steps = 10;
-//  const unsigned int n_steps = 100;
-  const unsigned int n_steps = 1000000;
+  const unsigned int n_steps = 100;
+//  const unsigned int n_steps = 1000000;
 
   //Whether and how ow often to dump data
-  const bool outputData = true;
+  const bool outputData = false;
   const unsigned int outputPeriod = n_steps/10;
 
+
+
   //Size of u
-  const unsigned int n = (1<<11) +2*NG;
-  //const unsigned int n = (1<<15) +2*NG;
+    const unsigned int n = (1<<11) +2*NG;
+//  const unsigned int n = (1<<15) +2*NG;
+
+  printf("== Configuration ==\n");
+  printf("\t|  n_steps: %d\n", n_steps);
+  printf("\t|  diffusion_grid_size: %d\n", n);
+  printf("\t|  block_size: %d\n", BLOCK_DIM_X);
+
+  double host_time;
+  double cuda_time;
+  double shared_time;
+  double excessive_time;
 
   //Block and grid dimensions
   const unsigned int blockDim = BLOCK_DIM_X;
@@ -269,7 +287,8 @@ int main(int argc, char** argv){
   }
   get_walltime(&endTime);
 
-  std::cout<<"Host function took: "<<(endTime-startTime)*1000./n_steps<<"ms per step"<<std::endl;
+  host_time = (endTime-startTime)*1000./n_steps;
+  printf("\t>> Host function took: %f ms per step\n", host_time);
 
   outputToFile(fs::path(output_files_root / "host_uFinal.dat"),host_u,n);
 
@@ -330,7 +349,8 @@ int main(int argc, char** argv){
   milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
 
-  std::cout<<"Cuda Kernel took: "<<milliseconds/n_steps<<"ms per step"<<std::endl;
+  cuda_time = milliseconds/n_steps;
+  printf("\t>> Cuda Kernel took: %f ms per step\n", cuda_time);
 
 
 /********************************************************************************
@@ -387,7 +407,8 @@ int main(int argc, char** argv){
   milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
 
-  std::cout<<"Shared Memory Kernel took: "<<milliseconds/n_steps<<"ms per step"<<std::endl;
+  shared_time = milliseconds/n_steps;
+  printf("\t>> Shared Memory Kernel took: %f ms per step\n", shared_time);
 
 
 /********************************************************************************
@@ -400,7 +421,7 @@ int main(int argc, char** argv){
     shared_u[i] = initial_u[i];
   }
 
-	cudaEventRecord(start);//Start timing
+  cudaEventRecord(start);//Start timing
   //Perform n_steps of diffusion
   for( i = 0 ; i < n_steps; i++){
 
@@ -425,7 +446,8 @@ int main(int argc, char** argv){
   milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
 
-  std::cout<<"Excessive cudaMemcpy took: "<<milliseconds/n_steps<<"ms per step"<<std::endl;
+  excessive_time = milliseconds/n_steps;
+  printf("\t>> Excessive cudaMemcpy took: %f ms per step\n", excessive_time);
 
 
   //Clean up the data
@@ -439,4 +461,7 @@ int main(int argc, char** argv){
   //FIXME free d_u and d_2
   checkCuda(cudaFree(d_u));
   checkCuda(cudaFree(d_u2));
+
+
+  printReport(n_steps, n, blockDim, host_time, cuda_time, shared_time, excessive_time);
 }

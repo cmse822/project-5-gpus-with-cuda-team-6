@@ -11,7 +11,14 @@ set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # CUDA 11.8
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} libstdc++ -O3; -G; -g; --std=C++17 -gencode arch=compute_86,code=sm_86)
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} libstdc++;
+                                        -O3;
+                                        -G;
+                                        -g;
+                                        --std=C++17;
+                                        --lineinfo;
+                                        --use_fast_math;
+                                        -gencode arch=compute_86,code=sm_86)
 set(CUDA_NVCC_FLAGS CACHE STRING "nvcc flags" FORCE)
 set(CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
 set(LIB_TYPE STATIC)
