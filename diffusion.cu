@@ -437,4 +437,6 @@ int main(int argc, char** argv){
   delete[] shared_u;
 
   //FIXME free d_u and d_2
+  checkCuda(cudaFree(d_u));
+  checkCuda(cudaFree(d_u2));
 }
