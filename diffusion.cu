@@ -10,7 +10,7 @@
 namespace fs = std::experimental::filesystem;
 
 const unsigned int NG = 2;
-const unsigned int BLOCK_DIM_X = 1024;
+const unsigned int BLOCK_DIM_X = 256;
 
 __constant__ float c_a, c_b, c_c;
 
@@ -179,11 +179,11 @@ int main(int argc, char** argv){
 
   //Number of steps to iterate
 //   const unsigned int n_steps = 10;
-  const unsigned int n_steps = 100;
-//  const unsigned int n_steps = 1000000;
+  // const unsigned int n_steps = 100;
+  const unsigned int n_steps = 1000000;
 
   //Whether and how ow often to dump data
-  const bool outputData = false;
+  const bool outputData = true;
   const unsigned int outputPeriod = n_steps/10;
 
 
@@ -341,8 +341,8 @@ int main(int argc, char** argv){
 	
 
   //Copy the memory back for one last data dump
-  sprintf(filename,"cuda_u%08d.dat",i);
-  outputToFile(fs::path(output_files_root / filename),cuda_u,n);
+  checkCuda(cudaMemcpy(cuda_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
+  outputToFile(fs::path(output_files_root / "cuda_uFinal.dat"),cuda_u, n);
 
   //Get the total time used on the GPU
   cudaEventSynchronize(stop);
@@ -397,9 +397,7 @@ int main(int argc, char** argv){
 
   //Copy the memory back for one last data dump
   checkCuda(cudaMemcpy(shared_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
-
-  sprintf(filename,"shared_u%08d.dat",i);
-  outputToFile(fs::path(output_files_root / filename),shared_u,n);
+  outputToFile(fs::path(output_files_root / "shared_uFinal.dat"),shared_u,n);
 
 
   //Get the total time used on the GPU
