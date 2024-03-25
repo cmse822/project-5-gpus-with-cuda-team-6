@@ -107,3 +107,19 @@ that multiple blocks may run on a single multiprocessor simultaneously, sharing
 the same shared memory.
 
     Not really, there's negligible slowdown and this is probably due to the I/O overhead masking most of paralellizable runtime performance differences between the block sizes. If the block sizes were so large that it fills up the the shared memory for the single multiprocessor, then there could be performance degradation that way, but I don't see that happening in this case.
+
+## Plotting Results
+
+Below are the plotting results we got:
+
+**Fig 1**
+
+![Figure 1](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig1.png)
+
+**Fig 2**
+
+![Figure 2](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig2.png)
+
+**Fig 3**
+
+![Figure 3](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig3.png)
