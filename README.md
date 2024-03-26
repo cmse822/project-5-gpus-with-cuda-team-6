@@ -123,3 +123,17 @@ Below are the plotting results we got:
 **Fig 3**
 
 ![Figure 3](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig3.png)
+
+
+## How to run
+
+Some notes on how to run `diffusion.cu`
+
+Ran it on `dev-amd20-v100`:
+
+```bash
+    module purge
+    module load NVHPC/21.9-GCCcore-10.3.0-CUDA-11.4
+    nvcc diffusion.cu -DDEBUG -o diffusion -lstdc++fs -O3
+    ./diffusion
+```
