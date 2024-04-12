@@ -6,7 +6,8 @@
 #include <cmath>
 #include <cassert>
 #include "get_walltime.h"
-using namespace std;
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
 
 const unsigned int NG = 2;
 const unsigned int BLOCK_DIM_X = 256;
@@ -37,7 +38,7 @@ cudaError_t checkCuda(cudaError_t result)
 void host_diffusion(float* u, float *u_new, const unsigned int n, 
      const float dx, const float dt){
 
-  //First, do the diffusion step on the interior points
+  // First, do the diffusion step on the interior points
   for(int i = NG; i < n-NG;i++){
     u_new[i] = u[i] + dt/(dx*dx) *(
                     - 1./12.f* u[i-2]
@@ -47,26 +48,41 @@ void host_diffusion(float* u, float *u_new, const unsigned int n,
                     - 1./12.f* u[i+2]);
   }
 
-  //Apply the dirichlet boundary conditions
+  // Apply the dirichlet boundary conditions
   u_new[0] = -u_new[NG+1];
   u_new[1] = -u_new[NG];
 
   u_new[n-NG]   = -u_new[n-NG-1];
   u_new[n-NG+1] = -u_new[n-NG-2];
 }
+
 /********************************************************************************
   Do one diffusion step, with CUDA
  *******************************************************************************/
 __global__ 
 void cuda_diffusion(float* u, float *u_new, const unsigned int n){
 
+  int idx = blockIdx.x*blockDim.x + threadIdx.x + NG;
 
-  //Do the diffusion
-  //FIXME
+  if (idx >= n-NG) return;
+
+  u_new[idx] = u[idx] + (- c_a * u[idx-2]
+                         + c_b * u[idx-1]
+                         - c_c * u[idx]
+                         + c_b * u[idx+1]
+                         - c_a * u[idx+2]);
 
   //Apply the dirichlet boundary conditions
-  //HINT: Think about which threads will have the data for the boundaries
-  //FIXME
+  if(idx == 0){
+    u_new[idx] = -u_new[NG+1];
+  } else if(idx == 1){
+    u_new[idx] = -u_new[NG];
+  } else if(idx == n - NG){
+    u_new[n - NG] = -u_new[n - NG - 1];
+  } else if(idx == n - NG + 1){
+    u_new[n - NG + 1] = -u_new[n - NG - 2];
+  }
+
 }
 
 /********************************************************************************
@@ -75,97 +91,148 @@ void cuda_diffusion(float* u, float *u_new, const unsigned int n){
 __global__ 
 void shared_diffusion(float* u, float *u_new, const unsigned int n){
 
-  //Allocate the shared memory
-  //FIXME
+  int globalIdx = blockIdx.x*blockDim.x + threadIdx.x;
+  int localIdx = threadIdx.x;
 
-  //Fill shared memory with the data needed from global memory
-  //HINT: 
-  //What data does each block need from global memory?
-  //When do the threads in the block need to sync?
-  //FIXME
+  if (globalIdx >= n - NG) return;
 
-  //Do the diffusion
-  //FIXME
+  // Allocate the shared memory
+  extern __shared__ float shared_u[];
 
-  //Apply the dirichlet boundary conditions
-  //HINT: Think about which threads will have the data for the boundaries
-  //FIXME
+  shared_u[localIdx] = u[globalIdx];
+  __syncthreads();
+
+  if (localIdx < 2 || localIdx >= blockDim.x-2){
+    u_new[globalIdx] = u[globalIdx] + (- c_a * u[globalIdx-2]
+                           + c_b * u[globalIdx-1]
+                           - c_c * u[globalIdx]
+                           + c_b * u[globalIdx+1]
+                           - c_a * u[globalIdx+2]);
+    return;
+  }
+
+  // Do the diffusion
+  u_new[globalIdx] = shared_u[localIdx] + (- c_a * shared_u[localIdx-2]
+                                           + c_b * shared_u[localIdx-1]
+                                           - c_c * shared_u[localIdx]
+                                           + c_b * shared_u[localIdx+1]
+                                           - c_a * shared_u[localIdx+2]);
+
+  // Apply the dirichlet boundary conditions
+  if(globalIdx == 0){
+    u_new[globalIdx] = -u_new[NG+1];
+  } else if(globalIdx == 1){
+    u_new[globalIdx] = -u_new[NG];
+  } else if(globalIdx == n - NG){
+    u_new[n - NG] = -u_new[n - NG - 1];
+  } else if(globalIdx == n - NG + 1){
+    u_new[n - NG + 1] = -u_new[n - NG - 2];
+  }
 }
 
 /********************************************************************************
   Dump u to a file
  *******************************************************************************/
-void outputToFile(string filename, float* u, unsigned int n){
+void outputToFile(const std::string& filename, float* u, unsigned int n){
 
-  ofstream file;
+  std::ofstream file;
   file.open(filename.c_str());
   file.precision(8);
   file << std::scientific;
   for(int i =0; i < n;i++){
-    file<<u[i]<<endl;
+    file<<u[i]<<std::endl;
   }
   file.close();
 };
+
+
+void printReport(unsigned int num_steps, unsigned int grid_size, unsigned int block_size, float host_time, float cuda_time, float shared_time, float excessive_time){
+  printf("| %d | %d | %d | %f | %f | %f | %f |\n", num_steps, grid_size, block_size, host_time, cuda_time, shared_time, excessive_time);
+}
 
 /********************************************************************************
   main
  *******************************************************************************/
 int main(int argc, char** argv){
 
-  //Number of steps to iterate
-  //const unsigned int n_steps = 10;
-  //const unsigned int n_steps = 100;
+  auto path = fs::current_path();
+  std::cout << "Current path is " << path << '\n';
+  auto output_files_root = path / "data";
+  std::cout << "Output files root is " << output_files_root << '\n';
+
+  if (!fs::exists(output_files_root)) {
+    fs::create_directory(output_files_root);
+  }
+
+
+  // Number of steps to iterate
+  // const unsigned int n_steps = 10;
+  // const unsigned int n_steps = 100;
   const unsigned int n_steps = 1000000;
 
   //Whether and how ow often to dump data
   const bool outputData = true;
   const unsigned int outputPeriod = n_steps/10;
 
-  //Size of u
-  const unsigned int n = (1<<11) +2*NG;
-  //const unsigned int n = (1<<15) +2*NG;
 
-  //Block and grid dimensions
+
+  // Size of u (2052 in first case)
+  const unsigned int n = (1<<11) +2*NG;
+  // const unsigned int n = (1<<15) +2*NG;
+
+  printf("== Configuration ==\n");
+  printf("\t|  n_steps: %d\n", n_steps);
+  printf("\t|  diffusion_grid_size: %d\n", n);
+  printf("\t|  block_size: %d\n", BLOCK_DIM_X);
+
+  double host_time;
+  double cuda_time;
+  double shared_time;
+  double excessive_time;
+
+  // Block and grid dimensions
   const unsigned int blockDim = BLOCK_DIM_X;
   const unsigned int gridDim = (n-2*NG)/blockDim;
 
-  //Physical dimensions of the domain
+  // Physical dimensions of the domain
   const float L = 2*M_PI;
   const float dx = L/(n-2*NG-1);
   const float dt = 0.25*dx*dx;
 
-  //Create constants for 6th order centered 2nd derivative
+  // Create constants for 6th order centered 2nd derivative
   float const_a = 1.f/12.f * dt/(dx*dx);  
   float const_b = 4.f/3.f  * dt/(dx*dx);
   float const_c = 5.f/2.f  * dt/(dx*dx);
 
-  //Copy these the cuda constant memory
-  //FIXME
+  // Copy these the cuda constant memory
+  checkCuda(cudaMemcpyToSymbol(c_a, &const_a, sizeof(float)));
+  checkCuda(cudaMemcpyToSymbol(c_b, &const_b, sizeof(float)));
+  checkCuda(cudaMemcpyToSymbol(c_c, &const_c, sizeof(float)));
 
-  //iterator, for later
+  // iterator, for later
   int i;
 
-  //Create cuda timers
+  // Create cuda timers
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 
-  //Timing variables
+  // Timing variables
   float milliseconds;
   double startTime,endTime;
 
-  //Filename for writing
+  // Filename for writing
   char filename[256];
 
-  //Allocate memory for the initial conditions
+  // Allocate memory for the initial conditions
   float* initial_u = new float[n];
 
-  //Initialize with a periodic sin wave that starts after the left hand
-  //boundaries and ends just before the right hand boundaries
+  // Initialize with a periodic sin wave that starts after the left hand
+  // boundaries and ends just before the right hand boundaries
   for( i = NG; i < n-NG; i++){
     initial_u[i] = sin( 2*M_PI/L*(i-NG)*dx);
   }
-  //Apply the dirichlet boundary conditions
+  // Apply the dirichlet boundary conditions
   initial_u[0] = -initial_u[NG+1];
   initial_u[1] = -initial_u[NG];
 
@@ -176,30 +243,30 @@ int main(int argc, char** argv){
   Test the host kernel for diffusion
  *******************************************************************************/
 
-  //Allocate memory in the host's heap
+  // Allocate memory in the host's heap
   float* host_u  = new float[n];
   float* host_u2 = new float[n];//buffer used for u_new
 
-  //Initialize the host memory
+  // Initialize the host memory
   for( i = 0; i < n; i++){
     host_u[i] = initial_u[i];
   }
 
-  outputToFile("data/host_uInit.dat",host_u,n);
+  outputToFile(fs::path(output_files_root / "host_uInit.dat"),host_u,n);
 
   
   get_walltime(&startTime);
-  //Perform n_steps of diffusion
+  // Perform n_steps of diffusion
   for( i = 0 ; i < n_steps; i++){
 
     if(outputData && i%outputPeriod == 0){
-      sprintf(filename,"data/host_u%08d.dat",i);
-      outputToFile(filename,host_u,n);
+      sprintf(filename,"host_u%08d.dat",i);
+      outputToFile(fs::path(output_files_root / filename),host_u,n);
     }
 
     host_diffusion(host_u,host_u2,n,dx,dt);
 
-    //Switch the buffer with the original u
+    // Switch the buffer with the original u
     float* tmp = host_u;
     host_u = host_u2;
     host_u2 = tmp;
@@ -207,154 +274,149 @@ int main(int argc, char** argv){
   }
   get_walltime(&endTime);
 
-  cout<<"Host function took: "<<(endTime-startTime)*1000./n_steps<<"ms per step"<<endl;
+  host_time = (endTime-startTime)*1000./n_steps;
+  printf("\t>> Host function took: %f ms per step\n", host_time);
 
-  outputToFile("data/host_uFinal.dat",host_u,n);
+  outputToFile(fs::path(output_files_root / "host_uFinal.dat"),host_u,n);
 
 /********************************************************************************
   Test the cuda kernel for diffusion
  *******************************************************************************/
-  //Allocate a copy for the GPU memory in the host's heap
+  // Allocate a copy for the GPU memory in the host's heap
   float* cuda_u  = new float[n];
 
-  //Initialize the cuda memory
+  // Initialize the cuda memory
   for( i = 0; i < n; i++){
     cuda_u[i] = initial_u[i];
   }
-  outputToFile("data/cuda_uInit.dat",cuda_u,n);
+  outputToFile(fs::path(output_files_root / "cuda_uInit.dat"),cuda_u,n);
 
-  //Allocate memory on the GPU
+  // Allocate memory on the GPU
   float* d_u, *d_u2;
-  //FIXME Allocate d_u,d_u2 on the GPU, and copy cuda_u into d_u
 
-	cudaEventRecord(start);//Start timing
-  //Perform n_steps of diffusion
+  // Allocate GPU memory for the input and output arrays
+  checkCuda(cudaMalloc(&d_u, n*sizeof(float)));
+  checkCuda(cudaMalloc(&d_u2, n*sizeof(float)));
+
+  // Copy the host input data to the device
+  checkCuda(cudaMemcpy(d_u, cuda_u, n*sizeof(float), cudaMemcpyHostToDevice));
+  cudaEventRecord(start); // Start timing
+
+  // Perform n_steps of diffusion
   for( i = 0 ; i < n_steps; i++){
 
     if(outputData && i%outputPeriod == 0){
-      //Copy data off the device for writing
-      sprintf(filename,"data/cuda_u%08d.dat",i);
-      //FIXME
-			
-      outputToFile(filename,cuda_u,n);
+      // Copy data off the device for writing
+      sprintf(filename,"cuda_u%08d.dat",i);
+      checkCuda(cudaMemcpy(cuda_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
+      outputToFile(fs::path(output_files_root / filename),cuda_u,n);
     }
 
-    //Call the cuda_diffusion kernel
-    //FIXME
+    // Call the cuda_diffusion kernel
+    // 8 x 256 = 2048 threads
+    cuda_diffusion<<<gridDim, blockDim>>>(d_u, d_u2, n);
 
-    //Switch the buffer with the original u
-    //FIXME
-
+    // Switch the buffer with the original u
+    float* tmp = d_u;
+    d_u = d_u2;
+    d_u2 = tmp;
   }
-	cudaEventRecord(stop);//End timing
+  cudaEventRecord(stop);  // End timing
 	
+  // Copy the memory back for one last data dump
+  checkCuda(cudaMemcpy(cuda_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
+  outputToFile(fs::path(output_files_root / "cuda_uFinal.dat"),cuda_u, n);
 
-  //Copy the memory back for one last data dump
-  sprintf(filename,"data/cuda_u%08d.dat",i);
-  //FIXME
-  
-  outputToFile(filename,cuda_u,n);
+  // Get the total time used on the GPU
+  cudaEventSynchronize(stop);
+  milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
 
-  //Get the total time used on the GPU
-	cudaEventSynchronize(stop);
-	milliseconds = 0;
-	cudaEventElapsedTime(&milliseconds, start, stop);
-
-  cout<<"Cuda Kernel took: "<<milliseconds/n_steps<<"ms per step"<<endl;
-
+  cuda_time = milliseconds/n_steps;
+  printf("\t>> Cuda Kernel took: %f ms per step\n", cuda_time);
 
 /********************************************************************************
   Test the cuda kernel for diffusion with shared memory
  *******************************************************************************/
 
-  //Allocate a copy for the GPU memory in the host's heap
+  // Allocate a copy for the GPU memory in the host's heap
   float* shared_u  = new float[n];
 
-  /*
-  //Initialize the cuda memory
+  // Initialize the cuda memory
   for( i = 0; i < n; i++){
     shared_u[i] = initial_u[i];
   }
-  outputToFile("data/shared_uInit.dat",shared_u,n);
+  outputToFile(fs::path(output_files_root /"shared_uInit.dat"),shared_u,n);
 
-  //Copy the initial memory onto the GPU
-  //FIXME copy shared_u to d_u
-	
+  // Copy the initial memory onto the GPU
+  checkCuda(cudaMemcpy(d_u, shared_u, n*sizeof(float), cudaMemcpyHostToDevice));
 
-
-	cudaEventRecord(start);//Start timing
-  //Perform n_steps of diffusion
+  cudaEventRecord(start); // Start timing
+  // Perform n_steps of diffusion
   for( i = 0 ; i < n_steps; i++){
 
     if(outputData && i%outputPeriod == 0){
-      //Copy data off the device for writing
-      sprintf(filename,"data/shared_u%08d.dat",i);
-      //FIXME
-			
-      outputToFile(filename,shared_u,n);
+      // Copy data off the device for writing
+      sprintf(filename,"shared_u%08d.dat",i);
+      checkCuda(cudaMemcpy(shared_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
+      outputToFile(fs::path(output_files_root / filename),shared_u,n);
     }
 
-    //Call the shared_diffusion kernel
-    //FIXME
+    // Call the shared_diffusion kernel
+    shared_diffusion<<<gridDim, blockDim, (blockDim)*sizeof(float)>>>(d_u, d_u2, n);
 
-    //Switch the buffer with the original u
-    //FIXME
-
+    // Switch the buffer with the original u
+    float* tmp = d_u;
+    d_u = d_u2;
+    d_u2 = tmp;
   }
-	cudaEventRecord(stop);//End timing
-	
+  cudaEventRecord(stop);//End timing
 
-  //Copy the memory back for one last data dump
-  sprintf(filename,"data/shared_u%08d.dat",i);
-  //FIXME
-  
+  // Copy the memory back for one last data dump
+  checkCuda(cudaMemcpy(shared_u, d_u, n*sizeof(float), cudaMemcpyDeviceToHost));
+  outputToFile(fs::path(output_files_root / "shared_uFinal.dat"),shared_u,n);
 
-  //Get the total time used on the GPU
-	cudaEventSynchronize(stop);
-	milliseconds = 0;
-	cudaEventElapsedTime(&milliseconds, start, stop);
+  // Get the total time used on the GPU
+  cudaEventSynchronize(stop);
+  milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
 
-  cout<<"Shared Memory Kernel took: "<<milliseconds/n_steps<<"ms per step"<<endl;
-  */
+  shared_time = milliseconds/n_steps;
+  printf("\t>> Shared Memory Kernel took: %f ms per step\n", shared_time);
+
 
 /********************************************************************************
   Test the cuda kernel for diffusion, with excessive memcpys
  *******************************************************************************/
 
-  /*
-  //Initialize the cuda memory
+  // Initialize the cuda memory
   for( i = 0; i < n; i++){
     shared_u[i] = initial_u[i];
   }
 
-	cudaEventRecord(start);//Start timing
-  //Perform n_steps of diffusion
+  cudaEventRecord(start); // Start timing
+  // Perform n_steps of diffusion
   for( i = 0 ; i < n_steps; i++){
 
-    //Copy the data from host to device
-    //FIXME copy shared_u to d_u
-
+    // Copy the data from host to device
+    checkCuda(cudaMemcpy(d_u, shared_u, n*sizeof(float), cudaMemcpyHostToDevice));
     //Call the shared_diffusion kernel
-    //FIXME
-
-    //Copy the data from host to device
-    //FIXME copy d_u2 to cuda_u
-
-
+    shared_diffusion<<<gridDim, blockDim, (blockDim)*sizeof(float)>>>(d_u, d_u2, n);
+    // Copy the data from host to device
+    checkCuda(cudaMemcpy(shared_u, d_u2, n*sizeof(float), cudaMemcpyDeviceToHost));
   }
-	cudaEventRecord(stop);//End timing
-	
+  cudaEventRecord(stop);//End timing
+
+  // Get the total time used on the GPU
+  cudaEventSynchronize(stop);
+  milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
+
+  excessive_time = milliseconds/n_steps;
+  printf("\t>> Excessive cudaMemcpy took: %f ms per step\n", excessive_time);
 
 
-  //Get the total time used on the GPU
-	cudaEventSynchronize(stop);
-	milliseconds = 0;
-	cudaEventElapsedTime(&milliseconds, start, stop);
-
-  cout<<"Excessive cudaMemcpy took: "<<milliseconds/n_steps<<"ms per step"<<endl;
-  */
-
-  //Clean up the data
+  // Clean up the data
   delete[] initial_u;
   delete[] host_u;
   delete[] host_u2;
@@ -362,5 +424,8 @@ int main(int argc, char** argv){
   delete[] cuda_u;
   delete[] shared_u;
 
-  //FIXME free d_u and d_2
+  checkCuda(cudaFree(d_u));
+  checkCuda(cudaFree(d_u2));
+
+  printReport(n_steps, n, blockDim, host_time, cuda_time, shared_time, excessive_time);
 }

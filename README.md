@@ -42,6 +42,8 @@ The CUDA blog posts on finite difference in
 [C/C++](https://devblogs.nvidia.com/finite-difference-methods-cuda-cc-part-1/)
 might also be useful.
 
+**Done.**
+
 ## Part 2
 
 Rewrite your naive implementation of the heat diffusion kernel to first load
@@ -54,6 +56,8 @@ need extra logic to load in ghost zones for each block, and some calls to
 memory loads should be from shared memory.
 
 This kernel should give identical results to the `cuda_diffusion` kernel.
+
+**Done.**
 
 ## Part 3
 
@@ -68,6 +72,8 @@ legacy code that you wish to optimize.
 Increase your grid size to `2^15+2*NG` and change the number of steps you take
 to 100. Run the program and take note of the timings. 
 
+**Done.**
+
 ## What to turn In
 
 Your code, well commented, and answers to these questions:
@@ -77,13 +83,59 @@ and the excessive memory copying case, using block dimensions of 256, 512,
 and 1024. Use a grid size of `2^15+2*NG` (or larger) and run for 100 steps (or
 shorter, if it's taking too long). Remember to use `-O3`! 
 
+    Below are the results using block dimensions of 256, 512 and 1024 with a grid size of 2^15+2*NG (32772 size) and 100 steps as requested:
+
+    |Num Steps  | Grid Size  | Block Size | Host (ms) | Naive (ms) | Shared (ms) | Excessive Memcpy (ms) |
+    |------------|------------|------------|----------|-----------|------------|----------------------|
+    | 100 | 32772 | 256 | 0.154772 | 0.003210 | 0.003419 | 0.055540 |
+    | 100 | 32772 | 512 | 0.157449 | 0.003290 | 0.003460 | 0.068581 |
+    | 100 | 32772 | 1024 | 0.153420 | 0.003284 | 0.003376 | 0.053585 |
+
+![part1](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/assets/94200328/b9215917-aae1-4bda-ba3c-a2c2a87ed61e)
+
 2. How do the GPU implementations compare to the single threaded host code. Is it
 faster than the theoretical performance of the host if we used all the cores on
 the CPU?
 
+    As seen in the results table above, the GPU implementations are faster then the single threaded host. It is faster even when utilizing all the cores on the CPU. This probably is even more noticeable as the num steps increases.
+
 3. For the naive kernel, the shared memory kernel, and the excessive `memcpy` case,
 which is the slowest? Why? How might you design a larger code to avoid this slow down?
+
+    The excessive memcpy case is the slowest. This is most likely due to the large number of data transfers from host to device. That is, the copying of data from host memory to device memory. This increasses overhead resulting in slower performance. For design purposes, I would try to minimize that data transfer between the host and device by creating variables on the device, aggregating the results, and transferring that data all back to the host at the end.
 
 4. Do you see a slow down when you increase the block dimension? Why? Consider
 that multiple blocks may run on a single multiprocessor simultaneously, sharing
 the same shared memory.
+
+    Not really, there's negligible slowdown and this is probably due to the I/O overhead masking most of paralellizable runtime performance differences between the block sizes. If the block sizes were so large that it fills up the the shared memory for the single multiprocessor, then there could be performance degradation that way, but I don't see that happening in this case.
+
+## Plotting Results
+
+Below are the plotting results we got:
+
+**Fig 1**
+
+![Figure 1](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig1.png)
+
+**Fig 2**
+
+![Figure 2](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig2.png)
+
+**Fig 3**
+
+![Figure 3](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/blob/main/plots/fig3.png)
+
+
+## How to run
+
+Some notes on how to run `diffusion.cu`
+
+Ran it on `dev-amd20-v100`:
+
+```bash
+    module purge
+    module load NVHPC/21.9-GCCcore-10.3.0-CUDA-11.4
+    nvcc diffusion.cu -DDEBUG -o diffusion -lstdc++fs -O3
+    ./diffusion
+```
