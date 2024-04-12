@@ -91,6 +91,8 @@ shorter, if it's taking too long). Remember to use `-O3`!
     | 100 | 32772 | 512 | 0.157449 | 0.003290 | 0.003460 | 0.068581 |
     | 100 | 32772 | 1024 | 0.153420 | 0.003284 | 0.003376 | 0.053585 |
 
+![part1](https://github.com/cmse822/project-5-gpus-with-cuda-team-6/assets/94200328/b9215917-aae1-4bda-ba3c-a2c2a87ed61e)
+
 2. How do the GPU implementations compare to the single threaded host code. Is it
 faster than the theoretical performance of the host if we used all the cores on
 the CPU?
